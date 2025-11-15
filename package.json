@@ -12,7 +12,10 @@
   "author": "Google LLC",
   "license": "Apache-2.0",
   "dependencies": {
-    "express": "^4.21.2"
+    "@dataconnect/generated": "file:src/dataconnect-generated",
+    "axios": "^1.6.8",
+    "express": "^4.21.2",
+    "firebase-admin": "^13.6.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
