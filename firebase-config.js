@@ -1,14 +1,14 @@
 
 const admin = require('firebase-admin');
 
-// Check for the GOOGLE_APPLICATION_CREDENTIALS environment variable
-if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-  throw new Error('GOOGLE_APPLICATION_CREDENTIALS environment variable is not set. You must set this to the path of your Firebase service account key file.');
-}
-
-// Initialize the Firebase Admin SDK
+// Initialize Firebase Admin SDK using environment variables
+// This is more secure for platforms like Render
 admin.initializeApp({
-  credential: admin.credential.applicationDefault()
+  credential: admin.credential.cert({
+    projectId: process.env.FIREBASE_PROJECT_ID,
+    privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'), // Replace escaped newlines
+    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+  }),
 });
 
 console.log('Firebase Admin SDK initialized successfully.');
