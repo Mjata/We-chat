@@ -6,8 +6,8 @@ if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert({
       projectId: process.env.FIREBASE_PROJECT_ID,
-      // The private key from Render's env var doesn't need replacing escaped newlines
-      privateKey: process.env.FIREBASE_PRIVATE_KEY,
+      // Replace escaped newlines from Render's env var to be actual newlines
+      privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
       clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
     }),
   });
