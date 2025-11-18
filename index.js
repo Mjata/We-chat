@@ -4,6 +4,7 @@ import admin from './firebase-config.js';
 import axios from 'axios';
 import { pesapalConfig } from './pesapal-config.js';
 import { v4 as uuidv4 } from 'uuid';
+import { AccessToken } from 'livekit-server-sdk';
 
 const app = express();
 app.use(express.json());
@@ -221,6 +222,54 @@ app.post('/api/recharge/webhook', async (req, res) => {
 });
 
 
+// --- LIVEKIT & CALLS ---
+app.post('/api/calls/livekit-token', authMiddleware, (req, res) => {
+  // 1. Get API Key and Secret from environment variables
+  const apiKey = process.env.LIVEKIT_API_KEY;
+  const apiSecret = process.env.LIVEKIT_API_SECRET;
+
+  // 2. Get roomName and participantIdentity from the request body
+  const { roomName, participantIdentity } = req.body;
+  
+  // 3. Get the authenticated user's UID from the middleware
+  const authenticatedUserId = req.user.uid;
+
+  // Security Check: Ensure the person requesting the token is the same person who will use it
+  if (participantIdentity !== authenticatedUserId) {
+    return res.status(403).json({ error: 'Forbidden: You can only request a token for yourself.' });
+  }
+
+  // 4. Validate inputs
+  if (!apiKey || !apiSecret) {
+    console.error('LiveKit server keys are not configured on the backend.');
+    return res.status(500).json({ error: 'LiveKit server keys are not configured.' });
+  }
+  if (!roomName || !participantIdentity) {
+    return res.status(400).json({ error: 'roomName and participantIdentity are required.' });
+  }
+
+  // 5. Create an AccessToken
+  const at = new AccessToken(apiKey, apiSecret, {
+    identity: participantIdentity,
+  });
+
+  // 6. Grant permissions to join the room
+  at.addGrant({
+    room: roomName,
+    roomJoin: true,
+    canPublish: true,
+    canSubscribe: true,
+  });
+
+  // 7. Generate the token (JWT)
+  const token = at.toJwt();
+  
+  console.log(`Successfully generated LiveKit token for user: ${participantIdentity}`);
+  
+  // 8. Send the token back to the client app
+  return res.status(200).json({ token: token });
+});
+
 // --- LIVE STREAMING ---
 app.post('/api/livestreams/start', authMiddleware, async (req, res) => {
     const { uid } = req.user;
@@ -267,4 +316,3 @@ app.get('/api/livestreams', authMiddleware, async (req, res) => {
 
 const port = parseInt(process.env.PORT) || 3000;
 app.listen(port, () => console.log(`Server is running on port ${port}`));
-
