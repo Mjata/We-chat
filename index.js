@@ -3,19 +3,22 @@ import express from 'express';
 import admin from './firebase-config.js';
 import axios from 'axios';
 import { pesapalConfig } from './pesapal-config.js';
+import { v4 as uuidv4 } from 'uuid'; // Import uuid
 
 const app = express();
 app.use(express.json());
 
 // --- Database Collection Names ---
 const USERS_COLLECTION = 'we_chat_users';
+const TRANSACTIONS_COLLECTION = 'pesapal_transactions'; // New collection for transactions
 
 // --- CONFIGURATION CONSTANTS ---
-const CALL_COST_PER_MINUTE = 50; // Coins deducted per minute of call
-const ADMOB_REWARD_AMOUNT = 20;  // Coins granted for watching a rewarded ad
+const CALL_COST_PER_MINUTE = 50;
+const ADMOB_REWARD_AMOUNT = 20;
 
 // --- Pesapal API Configuration ---
 const PESAPAL_API = 'https://cybqa.pesapal.com/pesapalv3'; // Sandbox URL
+const PESAPAL_CALLBACK_URL_BASE = 'https://we-chat-1-flwd.onrender.com'; // Your app's public URL
 
 // --- MIDDLEWARE ---
 const authMiddleware = async (req, res, next) => {
@@ -26,8 +29,14 @@ const authMiddleware = async (req, res, next) => {
   const idToken = authHeader.split('Bearer ')[1];
   try {
     req.user = await admin.auth().verifyIdToken(idToken);
+    // Fetch user's email from Auth if not present on token
+    if (!req.user.email) {
+        const firebaseUser = await admin.auth().getUser(req.user.uid);
+        req.user.email = firebaseUser.email;
+    }
     next();
   } catch (error) {
+    console.error("Auth middleware error:", error);
     res.status(403).json({ error: 'Unauthorized: Invalid token.' });
   }
 };
@@ -43,7 +52,7 @@ const getPesapalToken = async () => {
             consumer_secret: pesapalConfig.consumerSecret,
         });
         pesapalAuthToken = response.data.token;
-        tokenExpiry = new Date(new Date().getTime() + 290 * 1000);
+        tokenExpiry = new Date(new Date().getTime() + 290 * 1000); // 4.8 minutes
         return pesapalAuthToken;
     } catch (error) {
         console.error('Error getting Pesapal token:', error.response ? error.response.data : error.message);
@@ -67,13 +76,82 @@ app.post('/api/setupNewUser', authMiddleware, async (req, res) => {
 });
 
 // --- RECHARGE & PAYMENT ---
-const COIN_PACKAGES = { 'pack1': { coins: 100, price: 1.00 }, 'pack2': { coins: 550, price: 5.00 }, 'pack3': { coins: 1200, price: 10.00 } };
-app.post('/api/recharge/initiate', authMiddleware, /* ... Existing Pesapal code ... */ );
+const COIN_PACKAGES = { 'pack1': { coins: 100, price: 5.00 }, 'pack2': { coins: 550, price: 20.00 }, 'pack3': { coins: 1200, price: 50.00 } };
+
+app.post('/api/recharge/initiate', authMiddleware, async (req, res) => {
+    const { uid, email } = req.user;
+    const { packageId, phoneNumber } = req.body; // Expect packageId and phoneNumber from client
+
+    if (!packageId || !COIN_PACKAGES[packageId]) {
+        return res.status(400).json({ error: 'Invalid coin package selected.' });
+    }
+    
+    const db = admin.firestore();
+    const selectedPackage = COIN_PACKAGES[packageId];
+    const merchantReference = uuidv4(); // Generate a unique ID for this transaction
+    const ipnNotificationUrl = `${PESAPAL_CALLBACK_URL_BASE}/api/recharge/webhook`;
+
+    try {
+        // 1. Get Pesapal Auth Token
+        const token = await getPesapalToken();
+
+        // 2. Create a pending transaction record in Firestore
+        const transactionRef = db.collection(TRANSACTIONS_COLLECTION).doc(merchantReference);
+        await transactionRef.set({
+            userId: uid,
+            packageId: packageId,
+            amount: selectedPackage.price,
+            coins: selectedPackage.coins,
+            status: 'PENDING',
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            merchantReference: merchantReference,
+        });
+
+        // 3. Submit Order to Pesapal
+        const pesapalOrderPayload = {
+            id: merchantReference,
+            currency: 'KES',
+            amount: selectedPackage.price,
+            description: `Recharge ${selectedPackage.coins} coins`,
+            callback_url: ipnNotificationUrl, // For this app, both callback and IPN are the same
+            notification_id: ipnNotificationUrl,
+            billing_address: {
+                email_address: email,
+                phone_number: phoneNumber || '', // Use phone number from client if available
+                country_code: 'KE'
+            }
+        };
+
+        const headers = {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+        };
+
+        const pesapalResponse = await axios.post(
+            `${PESAPAL_API}/api/Transactions/SubmitOrderRequest`,
+            pesapalOrderPayload,
+            { headers }
+        );
+
+        if (pesapalResponse.data && pesapalResponse.data.redirect_url) {
+            // 4. Send redirect URL to the client
+            res.status(200).json({ redirectUrl: pesapalResponse.data.redirect_url });
+        } else {
+            throw new Error('Invalid response from Pesapal.');
+        }
+
+    } catch (error) {
+        console.error('Error initiating recharge:', error.response ? error.response.data : error.message);
+        // Update transaction status to FAILED
+        await db.collection(TRANSACTIONS_COLLECTION).doc(merchantReference).update({ status: 'FAILED' });
+        res.status(500).json({ error: 'Failed to initiate recharge.' });
+    }
+});
 
 // Pesapal IPN Listener (Webhook)
 app.get('/api/recharge/webhook', (req, res) => {
   console.log('GET /api/recharge/webhook - PesaPal URL Registration');
-  // PesaPal requires a specific response format to validate the URL
   const response = {
     "order_notification_type": "GET",
     "timestamp": new Date().toISOString(),
@@ -85,21 +163,23 @@ app.get('/api/recharge/webhook', (req, res) => {
 
 app.post('/api/recharge/webhook', (req, res) => {
   console.log('POST /api/recharge/webhook - Received PesaPal IPN:');
-  console.log(JSON.stringify(req.body, null, 2)); // Log the full notification body
+  console.log(JSON.stringify(req.body, null, 2));
 
-  // Acknowledge receipt of the IPN
+  // TODO: Add logic here to verify the notification and update the database
+  const { OrderMerchantReference, OrderNotificationType } = req.body;
+  if (OrderNotificationType === "IPNCHANGE") {
+      // This is the actual payment notification
+      // We will add the logic to handle this in the next step
+  }
+  
   const response = {
     "order_notification_type": "POST",
     "timestamp": new Date().toISOString(),
     "status": "200",
     "message": "IPN received successfully. Ready for processing."
   };
-
-  // TODO: Add logic here to verify the notification and update the database
-
   res.status(200).json(response);
 });
-
 
 // --- LIVE STREAMING ---
 app.post('/api/livestreams/start', authMiddleware, async (req, res) => {
@@ -143,7 +223,6 @@ app.get('/api/livestreams', authMiddleware, async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch live streams.' });
     }
 });
-
 
 // --- VIDEO & VOICE CALLS ---
 app.post('/api/calls/start', authMiddleware, /* ... Existing Call code ... */ );

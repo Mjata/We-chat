@@ -15,7 +15,8 @@
     "@dataconnect/generated": "file:src/dataconnect-generated",
     "axios": "^1.6.8",
     "express": "^4.21.2",
-    "firebase-admin": "^13.6.0"
+    "firebase-admin": "^13.6.0",
+    "uuid": "^13.0.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
