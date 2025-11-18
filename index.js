@@ -7,6 +7,9 @@ import { pesapalConfig } from './pesapal-config.js';
 const app = express();
 app.use(express.json());
 
+// --- Database Collection Names ---
+const USERS_COLLECTION = 'we_chat_users';
+
 // --- CONFIGURATION CONSTANTS ---
 const CALL_COST_PER_MINUTE = 50; // Coins deducted per minute of call
 const ADMOB_REWARD_AMOUNT = 20;  // Coins granted for watching a rewarded ad
@@ -52,7 +55,7 @@ const getPesapalToken = async () => {
 app.post('/api/setupNewUser', authMiddleware, async (req, res) => {
     const { uid, email } = req.user;
     const db = admin.firestore();
-    const userRef = db.collection('users').doc(uid);
+    const userRef = db.collection(USERS_COLLECTION).doc(uid);
     try {
         const userDoc = await userRef.get();
         if (userDoc.exists) return res.status(200).json({ message: 'User profile already exists.' });
@@ -72,10 +75,9 @@ app.get('/api/recharge/webhook', /* ... Existing Pesapal code ... */ );
 app.post('/api/livestreams/start', authMiddleware, async (req, res) => {
     const { uid } = req.user;
     const db = admin.firestore();
-    const userRef = db.collection('users').doc(uid);
+    const userRef = db.collection(USERS_COLLECTION).doc(uid);
     try {
         await userRef.update({ isLive: true });
-        // You might want to log this action in a separate 'streams' collection
         res.status(200).json({ success: true, message: 'User is now live.' });
     } catch (error) {
         console.error('Error starting live stream:', error);
@@ -86,7 +88,7 @@ app.post('/api/livestreams/start', authMiddleware, async (req, res) => {
 app.post('/api/livestreams/stop', authMiddleware, async (req, res) => {
     const { uid } = req.user;
     const db = admin.firestore();
-    const userRef = db.collection('users').doc(uid);
+    const userRef = db.collection(USERS_COLLECTION).doc(uid);
     try {
         await userRef.update({ isLive: false });
         res.status(200).json({ success: true, message: 'User has stopped being live.' });
@@ -99,7 +101,7 @@ app.post('/api/livestreams/stop', authMiddleware, async (req, res) => {
 app.get('/api/livestreams', authMiddleware, async (req, res) => {
     const db = admin.firestore();
     try {
-        const querySnapshot = await db.collection('users').where('isLive', '==', true).get();
+        const querySnapshot = await db.collection(USERS_COLLECTION).where('isLive', '==', true).get();
         const liveUsers = [];
         querySnapshot.forEach(doc => {
             const { uid, username, profilePictureUrl } = doc.data();
