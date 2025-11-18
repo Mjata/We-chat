@@ -69,7 +69,37 @@ app.post('/api/setupNewUser', authMiddleware, async (req, res) => {
 // --- RECHARGE & PAYMENT ---
 const COIN_PACKAGES = { 'pack1': { coins: 100, price: 1.00 }, 'pack2': { coins: 550, price: 5.00 }, 'pack3': { coins: 1200, price: 10.00 } };
 app.post('/api/recharge/initiate', authMiddleware, /* ... Existing Pesapal code ... */ );
-app.get('/api/recharge/webhook', /* ... Existing Pesapal code ... */ );
+
+// Pesapal IPN Listener (Webhook)
+app.get('/api/recharge/webhook', (req, res) => {
+  console.log('GET /api/recharge/webhook - PesaPal URL Registration');
+  // PesaPal requires a specific response format to validate the URL
+  const response = {
+    "order_notification_type": "GET",
+    "timestamp": new Date().toISOString(),
+    "status": "200",
+    "message": "Callback URL successfully registered"
+  };
+  res.status(200).json(response);
+});
+
+app.post('/api/recharge/webhook', (req, res) => {
+  console.log('POST /api/recharge/webhook - Received PesaPal IPN:');
+  console.log(JSON.stringify(req.body, null, 2)); // Log the full notification body
+
+  // Acknowledge receipt of the IPN
+  const response = {
+    "order_notification_type": "POST",
+    "timestamp": new Date().toISOString(),
+    "status": "200",
+    "message": "IPN received successfully. Ready for processing."
+  };
+
+  // TODO: Add logic here to verify the notification and update the database
+
+  res.status(200).json(response);
+});
+
 
 // --- LIVE STREAMING ---
 app.post('/api/livestreams/start', authMiddleware, async (req, res) => {
